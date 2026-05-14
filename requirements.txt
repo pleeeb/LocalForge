@@ -7,3 +7,5 @@ sentence-transformers
 streamlit
 langgraph
 langchain-core
+llama-index-readers-file
+PyMuPDF
