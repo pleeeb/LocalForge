@@ -1,18 +1,18 @@
 from ingestion.pipeline import DocumentPipelineManager
 from vector_store.chroma import VectorStoreProvider
 
-"""provider = VectorStoreProvider("test_collection")
-pipeline_manager = DocumentPipelineManager(provider=provider)
-
-directory_path = "./test_files"
-
-result = pipeline_manager.process_directory(directory_path, multi_files=False)
-
-print(result)"""
-
 import chromadb
 import json
 from pathlib import Path
+
+def create_vector_store_collection():
+    provider = VectorStoreProvider("test_collection")
+    pipeline_manager = DocumentPipelineManager(provider=provider)
+
+    directory_path = "./test_files"
+
+    pipeline_manager.process_directory(directory_path, multi_files=False)
+
 
 def export_collection_to_json(collection_name: str, output_filepath: str):
     print(f"Connecting to database to export '{collection_name}'...")
@@ -50,6 +50,8 @@ def export_collection_to_json(collection_name: str, output_filepath: str):
     print(f"✅ Successfully exported {total_records} records to {output_path.absolute()}")
 
 if __name__ == "__main__":
+    # Step 1: Ingest documents and populate the vector store
+    create_vector_store_collection()
     # Replace with your actual collection name
     export_collection_to_json(
         collection_name="test_collection", 

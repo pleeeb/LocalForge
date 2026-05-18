@@ -1,38 +1,29 @@
 from llama_index.core import VectorStoreIndex
-from llama_index.core.llms import ChatMessage
-from llama_index.llms.ollama import Ollama
 
 from vector_store.chroma import VectorStoreProvider
 
 class DocumentRetrievalManager:
-    def __init__(self, provider: VectorStoreProvider):
+    def __init__(self, provider: VectorStoreProvider, default_top_k: int = 5):
         self.index = VectorStoreIndex.from_vector_store(
             provider.vector_store,
             embed_model=provider.embed_model
         )
 
-    def get_retriever(self, top_k: int = 5):
-        return self.index.as_retriever(similarity_top_k=top_k)
+        self.retriever = self.index.as_retriever(similarity_top_k=default_top_k)
 
-messages = [
-    ChatMessage(role="system", content="You are a helpful assistant."),
-]
+    def get_documents(self, query: str, top_k: int = 5):
+        return self.retriever.retrieve(query)
+    
+    def print_retrieved_information(self, nodes):
+        for i, node in enumerate(nodes):
+            print(f"Node {i+1}:")
+            print(f"Score: {node.score:.4f}")
+            print(f"Text: {node.text}")
+            print(f"Metadata: {node.metadata}")
+            print("-" * 40)
 
-llm = Ollama(
-    model="qwen3:4b",
-    request_timeout=60,
-    context_window=8000
-)
+query = "What are Peters accomplishments in computer science?"
 
-while True:
-    user_input = input("Ask a question: \n")
-
-    message = ChatMessage(role="user", content=user_input)
-    messages.append(message)
-
-    chat_response = llm.chat(messages)
-
-    messages.append(chat_response.message)
-
-    print(chat_response.message.role)
-    print(chat_response.message.content)
+manager = DocumentRetrievalManager(provider=VectorStoreProvider(collection_name="test_collection"))
+retrieved_nodes = manager.get_documents(query=query, top_k=1)
+manager.print_retrieved_information(retrieved_nodes)
