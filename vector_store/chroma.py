@@ -6,7 +6,7 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 class VectorStoreProvider:
     def __init__(self, collection_name: str, model_name: str = "all-MiniLM-L6-v2"):
-        self.client = chromadb.PersistentClient("./db_storage/chroma_db")
+        self.client = chromadb.PersistentClient(path="./db_storage/chroma_db")
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
             metadata={"created_at": str(datetime.now(timezone.utc))},

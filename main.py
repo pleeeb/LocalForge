@@ -1,3 +1,7 @@
+from graph.checkpointer import SqliteDatabase, SyncCheckpointer
+from graph.schema import State
+from graph.graph import compile_graph, create_graph
+from graph.store import SyncStoreService
 from ingestion.pipeline import DocumentPipelineManager
 from vector_store.chroma import VectorStoreProvider
 
@@ -5,7 +9,7 @@ import chromadb
 import json
 from pathlib import Path
 
-def create_vector_store_collection():
+"""def create_vector_store_collection():
     provider = VectorStoreProvider("test_collection")
     pipeline_manager = DocumentPipelineManager(provider=provider)
 
@@ -47,13 +51,24 @@ def export_collection_to_json(collection_name: str, output_filepath: str):
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(formatted_records, f, indent=2, ensure_ascii=False)
         
-    print(f"✅ Successfully exported {total_records} records to {output_path.absolute()}")
+    print(f"✅ Successfully exported {total_records} records to {output_path.absolute()}")"""
 
 if __name__ == "__main__":
     # Step 1: Ingest documents and populate the vector store
-    create_vector_store_collection()
+    #create_vector_store_collection()
     # Replace with your actual collection name
-    export_collection_to_json(
-        collection_name="test_collection", 
-        output_filepath="chroma_export.json"
+    #export_collection_to_json(
+    #    collection_name="test_collection", 
+    #    output_filepath="chroma_export.json"
+    #)
+
+    sqlite_db_path = "./db_storage/checkpoints/checkpoint.db"
+    sqlite_conn = SqliteDatabase(db_path=sqlite_db_path).get_connection()
+    checkpointer = SyncCheckpointer(connection=sqlite_conn).get_checkpointer()
+    store = SyncStoreService(connection=sqlite_conn).get_store()
+
+    compiled_graph = compile_graph(
+        graph = create_graph(state_schema=State, context_schema=None),
+        checkpointer=checkpointer,
+        store=store
     )

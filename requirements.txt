@@ -9,3 +9,8 @@ langgraph
 langchain-core
 llama-index-readers-file
 PyMuPDF
+langchain
+llama-index-retrievers-bm25
+langgraph-checkpoint-sqlite
+aiosqlite
+langchain-ollama
