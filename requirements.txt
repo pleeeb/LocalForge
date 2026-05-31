@@ -14,3 +14,4 @@ llama-index-retrievers-bm25
 langgraph-checkpoint-sqlite
 aiosqlite
 langchain-ollama
+transformers[vision]

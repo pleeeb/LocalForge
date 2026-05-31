@@ -6,7 +6,3 @@ from langgraph.graph.message import add_messages
 class State(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     number_of_calls: int
-    requires_search: bool
-
-class SearchRequired(BaseModel):
-    requires_search: bool

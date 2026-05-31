@@ -1,4 +1,5 @@
 from llama_index.core import VectorStoreIndex
+from llama_index.core.llms import MockLLM
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.core.retrievers import QueryFusionRetriever
@@ -25,6 +26,7 @@ class DocumentRetrievalManager:
 
         hybrid_retriever = QueryFusionRetriever(
             retrievers=[vector_retriever, bm25_retriever],
+            llm=MockLLM(),
             similarity_top_k=top_k,
             num_queries=1,
             mode=FUSION_MODES.RECIPROCAL_RANK,
@@ -38,9 +40,3 @@ class DocumentRetrievalManager:
             print(f"Text: {node.text}")
             print(f"Metadata: {node.metadata}")
             print("-" * 40)
-
-query = "What are Peters accomplishments in computer science?"
-
-manager = DocumentRetrievalManager(provider=VectorStoreProvider(collection_name="test_collection"))
-retrieved_nodes = manager.get_documents(query=query, top_k=1)
-manager.print_retrieved_information(retrieved_nodes)

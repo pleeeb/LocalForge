@@ -1,24 +1,42 @@
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import Runnable
+from langchain_core.messages import SystemMessage, trim_messages
+from langchain_core.runnables import RunnableConfig
 
 
 from local_llm.chat_models import get_local_model
-from schema import SearchRequired, State
+from retrieval.retrieval import DocumentRetrievalManager
+from graph.schema import State
+from tools.retrieval_tool import create_retrieval_tool
+from vector_store.chroma import VectorStoreProvider
 
-def requires_search(state: State) -> str:
+provider = VectorStoreProvider(collection_name="test_collection")
+retriever = DocumentRetrievalManager(provider=provider)
+retrieval_tool = create_retrieval_tool(retriever=retriever)
 
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content="You are a routing assistant. Your only job is to evaluate the conversation and decide if a search tool is needed to accurately answer the user's latest message."),
-        MessagesPlaceholder(variable_name="conversation_history"),
-    ])
+tools = [retrieval_tool]
 
-    model = get_local_model(model_name="llama3.2")
-    structured_model: Runnable = model.with_structured_output(SearchRequired)
+def agent_node(state: State, config: RunnableConfig) -> dict:
+    selected_model = config.get("configurable", {}).get("model", "llama3.2")
+    selected_temperature = config.get("configurable", {}).get("temperature", 0.2)
+    model = get_local_model(model_name=selected_model, temperature=selected_temperature)
+    model_with_tools = model.bind_tools(tools)
 
-    chain = prompt | structured_model
+    trimmed_messages = trim_messages(
+        state["messages"],
+        max_tokens=5000,
+        strategy="last",
+        token_counter=len,
+        allow_partial=False,
+        start_on="human"
+    )
 
-    response: SearchRequired = chain.invoke({"conversation_history": state["messages"][-3:]})
+    system_prompt = SystemMessage(content=(
+        "You are a helpful assistant. You have access to tools. "
+        "When calling a tool, you MUST pass actual string and integer values for the arguments. "
+        "NEVER pass the schema definition (like {'type': 'string'})."
+    ))
 
-    return "search_required" if response.requires_search else "no_search_required"
+    messages_to_pass = [system_prompt] + trimmed_messages
+    
+    response = model_with_tools.invoke(messages_to_pass)
 
+    return {"messages": [response]}
