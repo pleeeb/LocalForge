@@ -16,6 +16,7 @@ class DocumentPipelineManager:
     def __init__(self, provider: VectorStoreProvider):
         llm = OllamaLLM(model_name="llama3.2").get_model()
         self.persist_dir = "./db_storage/pipeline_storage"
+        self.provider = provider
 
         if os.path.exists(self.persist_dir):
             self.docstore = SimpleDocumentStore.from_persist_dir(self.persist_dir)
@@ -26,9 +27,9 @@ class DocumentPipelineManager:
             transformations=[
                 SentenceSplitter(chunk_size=512, chunk_overlap=50),
                 StructuredTitleExtractor(llm=llm),
-                provider.embed_model
+                self.provider.embed_model
             ],
-            vector_store=provider.vector_store,
+            vector_store=self.provider.vector_store,
             docstore = self.docstore,
             docstore_strategy=DocstoreStrategy.UPSERTS
         )
@@ -36,16 +37,30 @@ class DocumentPipelineManager:
     def process_directory(self, directory_path: str, multi_files: bool = True):
         allowed_extensions = ['.txt', '.pdf', '.docx']
 
+        rejected_files = []
+        for root, _, files in os.walk(directory_path):
+            for file in files:
+                if file.lower().endswith(tuple(allowed_extensions)):
+                    continue
+                else:
+                    rejected_files.append(os.path.join(root, file))
+
         pdf_extractor = PyMuPDFReader()
 
-        reader = SimpleDirectoryReader(
-            directory_path,
-            required_exts=allowed_extensions,
-            recursive=multi_files,
-            file_extractor={'.pdf': pdf_extractor})
-        
-        nodes = self.pipeline.run(documents=reader.load_data())
-        self.pipeline.persist(persist_dir=self.persist_dir)
+        try:
+            reader = SimpleDirectoryReader(
+                directory_path,
+                exclude=rejected_files,
+                required_exts=allowed_extensions,
+                recursive=multi_files,
+                file_extractor={'.pdf': pdf_extractor})
+            
+            nodes = self.pipeline.run(documents=reader.load_data())
+            self.pipeline.persist(persist_dir=self.persist_dir)
+        except Exception as e:
+            print(f"Error processing directory: {e}")
+            nodes = []
 
         return nodes
+    
         
