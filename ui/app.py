@@ -2,8 +2,6 @@ import os
 import uuid
 
 import streamlit as st
-import time
-import shutil
 
 from graph.checkpointer import SqliteDatabase, SyncCheckpointer
 from graph.graph import compile_graph, create_graph
@@ -12,6 +10,7 @@ from graph.store import SyncStoreService
 from vector_store.chroma import VectorStoreProvider
 from ingestion.pipeline import DocumentPipelineManager
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 # ─── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -317,8 +316,6 @@ def save_files(files: list) -> None:
             f.write(file.getbuffer())
 
 # ─── Session State ─────────────────────────────────────────────────────────────
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 if "index_ready" not in st.session_state:
     st.session_state.index_ready = False
 if "doc_count" not in st.session_state:
@@ -357,6 +354,16 @@ compiled_graph = compile_graph(
     store=store
 )
 
+if "messages" not in st.session_state:
+    config: RunnableConfig = {"configurable": {"thread_id": st.session_state.thread_id}}
+    historical_state = compiled_graph.get_state(config)
+
+    if historical_state.values and "messages" in historical_state.values:
+        st.session_state.messages = historical_state.values["messages"]
+        st.session_state.index_ready = True  # assume index is ready if we have historical messages
+    else:
+        st.session_state.messages = []
+
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
@@ -379,7 +386,7 @@ with st.sidebar:
     st.markdown('<div class="lf-section-label">Model</div>', unsafe_allow_html=True)
     model = st.selectbox(
         "LLM",
-        ["qwen2.5:7b", "llama3.2:8b", "mistral:7b"],
+        ["qwen2.5:7b", "llama3.2", "mistral:7b"],
         label_visibility="collapsed",
     )
     embed_model = st.selectbox(
@@ -403,7 +410,7 @@ with st.sidebar:
     st.markdown('<div class="lf-section-label">Documents</div>', unsafe_allow_html=True)
     uploaded = st.file_uploader(
         "Upload files",
-        type=["pdf", "txt", "md", "docx"],
+        type=["pdf", "txt", "docx"],
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
@@ -413,7 +420,7 @@ with st.sidebar:
 
         if st.button("⊕  Build index"):
             with st.spinner("Indexing…"):
-                nodes = ingestion_pipeline.process_directory("./test_files", multi_files=False)
+                nodes = ingestion_pipeline.process_directory("./test_files", multi_files=True)
 
                 st.session_state.index_ready = True
                 st.session_state.doc_count = len(uploaded)
@@ -459,29 +466,62 @@ with tab_chat:
         """, unsafe_allow_html=True)
     else:
         # Render message history
+        running_trace = []
+        running_sources = []
+        step_counter = 1
+
         for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+            if isinstance(msg, HumanMessage):
+                with st.chat_message("user"):
+                    st.markdown(msg.content)
 
-                # Sources
-                if msg.get("sources"):
-                    chips = "".join(
-                        f'<span class="lf-source-chip">↗ {s}</span>'
-                        for s in msg["sources"]
-                    )
-                    st.markdown(f'<div class="lf-sources">{chips}</div>', unsafe_allow_html=True)
+            elif isinstance(msg, ToolMessage):
+                running_trace.append({
+                    "step": str(step_counter),
+                    "tool": msg.name,
+                    "note": f"Execution complete. Returned {len(msg.content)} chars of context."
+                })
+                step_counter += 1
 
-                # Trace (collapsed)
-                if msg.get("trace") and st.session_state.show_trace:
-                    with st.expander("reasoning trace", expanded=False):
-                        for step in msg["trace"]:
-                            st.markdown(
-                                f'<div class="lf-trace">'
-                                f'<span class="lf-trace-step">[{step["step"]}]</span> '
-                                f'<span class="lf-trace-tool">{step["tool"]}</span> — {step["note"]}'
-                                f'</div>',
-                                unsafe_allow_html=True,
-                            )
+                if msg.name == "retrieve_documents" and msg.artifact:
+                    for artifact in msg.artifact:
+                        if artifact not in running_sources:
+                            running_sources.append(artifact)
+
+
+            elif isinstance(msg, AIMessage):
+                if msg.tool_calls:
+                    for call in msg.tool_calls:
+                        running_trace.append({
+                            "step": str(step_counter),
+                            "tool": "agent_node",
+                            "note": f"Decided to call tool '{call['name']}' with args {call['args']}."
+                        })
+                        step_counter += 1
+
+                if msg.content:
+                    with st.chat_message("assistant"):
+                        st.markdown(msg.content)
+
+                        if running_sources:
+                            chips = "".join(f'<span class="lf-source-chip">↗ {s}</span>' for s in running_sources)
+                            st.markdown(f'<div class="lf-sources">{chips}</div>', unsafe_allow_html=True)
+                    
+
+                        if running_trace and st.session_state.show_trace:
+                            with st.expander("reasoning trace", expanded=False):
+                                for step in running_trace:
+                                    st.markdown(
+                                        f'<div class="lf-trace">'
+                                        f'<span class="lf-trace-step">[{step["step"]}]</span> '
+                                        f'<span class="lf-trace-tool">{step["tool"]}</span> — {step["note"]}'
+                                        f'</div>',
+                                        unsafe_allow_html=True,
+                                    )
+
+                        running_trace = []
+                        running_sources = []
+                        step_counter = 1
 
         # Chat input
         prompt = st.chat_input(
@@ -489,7 +529,8 @@ with tab_chat:
             disabled=not st.session_state.index_ready,
         )
         if prompt:
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            user_msg = HumanMessage(content=prompt)
+            st.session_state.messages.append(user_msg)
             with st.chat_message("user"):
                 st.markdown(prompt)
 
@@ -510,42 +551,9 @@ with tab_chat:
                         config=graph_config
                     )
 
-                ai_message = final_state["messages"][-1]
-                reply = ai_message.content
+                st.session_state.messages = final_state["messages"]  # update session state with any new messages from the graph execution
 
-                print("Agent says:", final_state["messages"])
-
-                # ── Placeholder response — wire up your agent here ──
-                #reply = st.session_state.messages[-1] if st.session_state.messages else "Sorry, I couldn't process that."
-                reply = "test reply"
-                sources = ["doc_01.pdf · p.4", "doc_02.pdf · p.11"]
-                trace = [
-                    {"step": "1", "tool": "router", "note": "query classified as factual lookup"},
-                    {"step": "2", "tool": "document_knowledge_tool", "note": f"retrieved top {top_k} chunks"},
-                    {"step": "3", "tool": "llm", "note": f"synthesised answer with {model}"},
-                ]
-
-                st.markdown(reply)
-                chips = "".join(f'<span class="lf-source-chip">↗ {s}</span>' for s in sources)
-                st.markdown(f'<div class="lf-sources">{chips}</div>', unsafe_allow_html=True)
-
-                if st.session_state.show_trace:
-                    with st.expander("reasoning trace", expanded=False):
-                        for step in trace:
-                            st.markdown(
-                                f'<div class="lf-trace">'
-                                f'<span class="lf-trace-step">[{step["step"]}]</span> '
-                                f'<span class="lf-trace-tool">{step["tool"]}</span> — {step["note"]}'
-                                f'</div>',
-                                unsafe_allow_html=True,
-                            )
-
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": reply,
-                "sources": sources,
-                "trace": trace,
-            })
+                st.rerun()  # re-render to show new messages, sources, and trace
 
 # ── AGENT TRACE TAB ──
 with tab_trace:
@@ -557,14 +565,67 @@ with tab_trace:
         </div>
         """, unsafe_allow_html=True)
     else:
-        agent_msgs = [m for m in st.session_state.messages if m.get("trace")]
-        for i, msg in enumerate(agent_msgs):
+        run_id = 1
+        current_trace = []
+        user_query = ""
+        step_counter = 1
+
+        # Scan the single source of truth to build the global trace view
+        for msg in st.session_state.messages:
+            
+            # When a user speaks, it marks the beginning of a new "Run"
+            if isinstance(msg, HumanMessage):
+                # If we already have a trace from a previous loop, render it before resetting
+                if current_trace:
+                    st.markdown(
+                        f'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:0.7rem;'
+                        f'color:#3d4450;margin-bottom:0.3rem;">run #{run_id} · query: "{user_query}"</div>',
+                        unsafe_allow_html=True,
+                    )
+                    for step in current_trace:
+                        st.markdown(
+                            f'<div class="lf-trace" style="margin-bottom:0.35rem;">'
+                            f'<span class="lf-trace-step">[{step["step"]}]</span>&nbsp;&nbsp;'
+                            f'<span class="lf-trace-tool">{step["tool"]}</span>'
+                            f'<span style="color:#2e333c"> — {step["note"]}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown('<hr class="lf-divider"/>', unsafe_allow_html=True)
+                    run_id += 1
+                
+                # Reset buffers for the new run
+                current_trace = []
+                user_query = msg.content
+                step_counter = 1
+
+            # Capture AI Decisions
+            elif isinstance(msg, AIMessage) and msg.tool_calls:
+                for call in msg.tool_calls:
+                    current_trace.append({
+                        "step": str(step_counter),
+                        "tool": "agent_node",
+                        "note": f"Called '{call['name']}' with args {call['args']}"
+                    })
+                    step_counter += 1
+            
+            # Capture Tool Executions
+            elif isinstance(msg, ToolMessage):
+                current_trace.append({
+                    "step": str(step_counter),
+                    "tool": msg.name,
+                    "note": f"Execution complete. Returned {len(msg.artifact)} sources."
+                })
+                step_counter += 1
+
+        # Render the very last run (since the loop ends before triggering a reset)
+        if current_trace:
             st.markdown(
                 f'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:0.7rem;'
-                f'color:#3d4450;margin-bottom:0.3rem;">run #{i+1} · {model}</div>',
+                f'color:#3d4450;margin-bottom:0.3rem;">run #{run_id} · query: "{user_query}"</div>',
                 unsafe_allow_html=True,
             )
-            for step in msg["trace"]:
+            for step in current_trace:
                 st.markdown(
                     f'<div class="lf-trace" style="margin-bottom:0.35rem;">'
                     f'<span class="lf-trace-step">[{step["step"]}]</span>&nbsp;&nbsp;'
