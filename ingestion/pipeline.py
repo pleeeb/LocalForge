@@ -62,5 +62,3 @@ class DocumentPipelineManager:
             nodes = []
 
         return nodes
-    
-        

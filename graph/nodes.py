@@ -24,7 +24,7 @@ def agent_node(state: State, config: RunnableConfig) -> dict:
         state["messages"],
         max_tokens=5000,
         strategy="last",
-        token_counter=len,
+        token_counter="approximate",
         allow_partial=False,
         start_on="human"
     )
